@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:connect_pharma/services/notification_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -31,6 +32,7 @@ class _UserScreenState extends State<UserScreen> {
   @override
   void initState() {
     super.initState();
+    NotificationService().init();
     // Delay listener setup to ensure widget is fully mounted
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _listenToRequestStatusChanges();
@@ -132,6 +134,15 @@ class _UserScreenState extends State<UserScreen> {
 
   void _showNotification(String title, String message) {
     if (!mounted) return;
+    
+    // Show system notification
+    NotificationService().showNotification(
+      id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title: title,
+      body: message,
+    );
+
+    // Also show in-app SnackBar for visibility if app is open
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(

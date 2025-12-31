@@ -4,6 +4,7 @@ import '../services/auth_service.dart';
 import 'package:connect_pharma/screens/User/UserScreen.dart';
 import 'package:connect_pharma/screens/LoginScreen.dart';
 import 'Pharmacist/PharmacistScreen.dart';
+import 'package:connect_pharma/screens/Rider/RiderScreen.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -66,8 +67,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       if (_role == 'pharmacist') {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PharmacistScreen()));
       } else if (_role == 'rider') {
-        // RiderScreen not present? replace with UserScreen or add RiderScreen
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserScreen()));
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const RiderScreen()));
       } else {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserScreen()));
       }

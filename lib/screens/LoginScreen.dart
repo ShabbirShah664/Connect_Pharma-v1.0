@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import 'package:connect_pharma/screens/User/UserScreen.dart';
 import 'package:connect_pharma/screens/Pharmacist/PharmacistScreen.dart';
-// import rider screen when available
+import 'package:connect_pharma/screens/Rider/RiderScreen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -25,8 +25,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (role == 'pharmacist') {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PharmacistScreen()));
       } else if (role == 'rider') {
-        // replace with RiderScreen when created
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserScreen()));
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const RiderScreen()));
       } else {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserScreen()));
       }

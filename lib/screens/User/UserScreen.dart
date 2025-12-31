@@ -5,6 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connect_pharma/services/request_service.dart';
+import 'package:connect_pharma/screens/User/DeliveryScreen.dart';
+import 'package:connect_pharma/screens/User/SelfPickupScreen.dart';
 
 class UserScreen extends StatefulWidget {
   const UserScreen({super.key});
@@ -102,7 +104,7 @@ class _UserScreenState extends State<UserScreen> {
             .get();
         
         if (pharmacyDoc.exists) {
-          final pharmacyData = pharmacyDoc.data();
+          final pharmacyData = pharmacyDoc.data() as Map<String, dynamic>?;
           pharmacyName = pharmacyData?['displayName'] as String? ?? 
                         pharmacyData?['pharmacyName'] as String? ?? 
                         pharmacyData?['name'] as String? ?? 
@@ -236,8 +238,9 @@ class _UserScreenState extends State<UserScreen> {
           icon: const Icon(Icons.logout),
           onPressed: () async {
             await FirebaseAuth.instance.signOut();
-            if (mounted)
+            if (mounted) {
               Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
+            }
           },
         )
       ]),
@@ -384,9 +387,20 @@ class _UserScreenState extends State<UserScreen> {
               }
 
               final docs = snapshot.data!.docs;
+              
+              // Sort documents by createdAt (most recent first) since we removed orderBy from query
+              final sortedDocs = docs.toList()
+                ..sort((a, b) {
+                  final aTime = a.data()['createdAt'] as Timestamp?;
+                  final bTime = b.data()['createdAt'] as Timestamp?;
+                  if (aTime == null && bTime == null) return 0;
+                  if (aTime == null) return 1;
+                  if (bTime == null) return -1;
+                  return bTime.compareTo(aTime); // Descending order (most recent first)
+                });
 
               return Column(
-                children: docs.map((doc) {
+                children: sortedDocs.map((doc) {
                   final data = doc.data();
                   final status = data['status'] as String? ?? 'unknown';
                   final medicineName = data['medicineName'] as String? ?? '';
@@ -433,112 +447,170 @@ class _UserScreenState extends State<UserScreen> {
                       statusText = status;
                   }
 
+                  // Changed list tile to be inside a column to allow extra buttons at bottom
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
                     elevation: status == 'accepted' ? 4 : 2,
                     color: status == 'accepted' ? Colors.green.shade50 : null,
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: statusColor.withOpacity(0.2),
-                        child: Icon(statusIcon, color: statusColor, size: 24),
-                      ),
-                      title: Text(
-                        displayName,
-                        style: TextStyle(
-                          fontWeight: status == 'accepted' 
-                              ? FontWeight.bold 
-                              : FontWeight.normal,
-                        ),
-                      ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Icon(statusIcon, 
-                                   color: statusColor, 
-                                   size: 16),
-                              const SizedBox(width: 4),
-                              Text(
-                                statusText,
-                                style: TextStyle(
-                                  color: statusColor,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              if (status == 'accepted' && acceptedBy != null)
-                                FutureBuilder<DocumentSnapshot>(
-                                  future: FirebaseFirestore.instance
-                                      .collection('pharmacists')
-                                      .doc(acceptedBy)
-                                      .get(),
-                                  builder: (context, pharmacySnapshot) {
-                                    if (pharmacySnapshot.hasData &&
-                                        pharmacySnapshot.data!.exists) {
-                                      final pharmacyData = 
-                                          pharmacySnapshot.data!.data();
-                                      final pharmacyName = 
-                                          pharmacyData?['displayName'] as String? ?? 
-                                          pharmacyData?['pharmacyName'] as String? ?? 
-                                          pharmacyData?['name'] as String? ?? 
-                                          'Pharmacy';
-                                      return Padding(
-                                        padding: const EdgeInsets.only(left: 8),
-                                        child: Text(
-                                          'by $pharmacyName',
-                                          style: TextStyle(
-                                            color: Colors.green.shade700,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                    return const SizedBox.shrink();
-                                  },
-                                ),
-                            ],
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: statusColor.withOpacity(0.2),
+                            child: Icon(statusIcon, color: statusColor, size: 24),
                           ),
-                          if (createdAt != null) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              _formatTimestamp(createdAt),
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 12,
-                              ),
+                          title: Text(
+                            displayName,
+                            style: TextStyle(
+                              fontWeight: status == 'accepted' 
+                                  ? FontWeight.bold 
+                                  : FontWeight.normal,
                             ),
-                          ],
-                          if (prescriptionUrl != null) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(Icons.image, 
-                                     size: 14, 
-                                     color: Colors.grey[600]),
-                                const SizedBox(width: 4),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(statusIcon, 
+                                       color: statusColor, 
+                                       size: 16),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    statusText,
+                                    style: TextStyle(
+                                      color: statusColor,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (status == 'accepted' && acceptedBy != null)
+                                    FutureBuilder<DocumentSnapshot>(
+                                      future: FirebaseFirestore.instance
+                                          .collection('pharmacists')
+                                          .doc(acceptedBy)
+                                          .get(),
+                                      builder: (context, pharmacySnapshot) {
+                                        if (pharmacySnapshot.hasData &&
+                                            pharmacySnapshot.data!.exists) {
+                                          final pharmacyData = 
+                                              pharmacySnapshot.data!.data() as Map<String, dynamic>?;
+                                          final pharmacyName = 
+                                              pharmacyData?['displayName'] as String? ?? 
+                                              pharmacyData?['pharmacyName'] as String? ?? 
+                                              pharmacyData?['name'] as String? ?? 
+                                              'Pharmacy';
+                                          return Padding(
+                                            padding: const EdgeInsets.only(left: 8),
+                                            child: Text(
+                                              'by $pharmacyName',
+                                              style: TextStyle(
+                                                color: Colors.green.shade700,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                        return const SizedBox.shrink();
+                                      },
+                                    ),
+                                ],
+                              ),
+                              if (createdAt != null) ...[
+                                const SizedBox(height: 4),
                                 Text(
-                                  'Prescription attached',
+                                  _formatTimestamp(createdAt),
                                   style: TextStyle(
                                     color: Colors.grey[600],
                                     fontSize: 12,
                                   ),
                                 ),
                               ],
-                            ),
-                          ],
-                        ],
-                      ),
-                      trailing: status == 'accepted'
-                          ? Icon(Icons.arrow_forward_ios,
-                                color: Colors.green.shade700,
-                                size: 18)
-                          : null,
+                              if (prescriptionUrl != null) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Icon(Icons.image, 
+                                         size: 14, 
+                                         color: Colors.grey[600]),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Prescription attached',
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                          trailing: null,
+                        ),
+                        // Add buttons if accepted
+                        if (status == 'accepted')
+                          _buildAcceptedOptions(doc.id, data),
+                      ],
                     ),
                   );
                 }).toList(),
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAcceptedOptions(String requestId, Map<String, dynamic> data) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Row(
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DeliveryScreen(
+                      requestId: requestId,
+                      requestData: data,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.delivery_dining, size: 18),
+              label: const Text('Delivery'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 0, horizontal: 8),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SelfPickupScreen(
+                      requestId: requestId,
+                      requestData: data,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.store, size: 18),
+              label: const Text('Pickup'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 0, horizontal: 8),
+              ),
+            ),
           ),
         ],
       ),

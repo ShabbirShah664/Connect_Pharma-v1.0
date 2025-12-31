@@ -86,12 +86,13 @@ class RequestService {
     }
   }
 
-  /// Streams requests for a given user (most recent first).
+  /// Streams requests for a given user.
+  /// Note: Removed orderBy to avoid requiring a composite index in Firestore.
+  /// Results are returned in natural order (should be sorted client-side by createdAt).
   static Stream<QuerySnapshot<Map<String, dynamic>>> streamRequestsForUser(String userId) {
     return _db
         .collection('requests')
         .where('userId', isEqualTo: userId)
-        .orderBy('createdAt', descending: true)
         .snapshots();
   }
 
@@ -107,6 +108,15 @@ class RequestService {
         .collection('requests')
         .where('broadcast', isEqualTo: true)
         .where('status', isEqualTo: 'open')
+        .snapshots();
+  }
+
+  /// Fetch accepted requests for riders.
+  /// Returns all requests where status='accepted'.
+  static Stream<QuerySnapshot<Map<String, dynamic>>> streamAcceptedRequests() {
+    return _db
+        .collection('requests')
+        .where('status', isEqualTo: 'accepted')
         .snapshots();
   }
 
@@ -162,5 +172,43 @@ class RequestService {
   /// Utility: attempt to read a request doc once.
   static Future<DocumentSnapshot<Map<String, dynamic>>> fetchRequest(String requestId) {
     return _db.collection('requests').doc(requestId).get();
+  }
+
+  /// Fetch requests accepted by a specific pharmacist
+  static Stream<QuerySnapshot<Map<String, dynamic>>> streamRequestsAcceptedByPharmacist(String pharmacistId) {
+    return _db
+        .collection('requests')
+        .where('acceptedBy', isEqualTo: pharmacistId)
+        .snapshots();
+  }
+
+  /// Fetch active deliveries for a rider (status = delivering)
+  static Stream<QuerySnapshot<Map<String, dynamic>>> streamRiderActiveRequests(String riderId) {
+    return _db
+        .collection('requests')
+        .where('riderId', isEqualTo: riderId)
+        .where('status', isEqualTo: 'delivering')
+        .snapshots();
+  }
+
+  /// Generic status update (e.g. for riders to mark as picked up/delivered)
+  /// Optionally updates riderId if provided
+  static Future<void> updateRequestStatus(String requestId, String status, {String? riderId}) async {
+    try {
+      final updateData = <String, dynamic>{
+        'status': status,
+        '${status}At': FieldValue.serverTimestamp(),
+      };
+      
+      if (riderId != null) {
+        updateData['riderId'] = riderId;
+      }
+
+      await _db.collection('requests').doc(requestId).update(updateData);
+    } on FirebaseException catch (e) {
+      throw Exception('Firestore error (${e.code}): ${e.message}');
+    } catch (e) {
+      throw Exception('Failed to update request status: $e');
+    }
   }
 }

@@ -9,6 +9,8 @@ import 'package:connect_pharma/services/request_service.dart';
 import 'package:connect_pharma/widgets/FadeInSlide.dart';
 import 'package:connect_pharma/screens/User/DeliveryScreen.dart';
 import 'package:connect_pharma/screens/User/SelfPickupScreen.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 
 class UserScreen extends StatefulWidget {
   // ... existing code ...
@@ -28,15 +30,68 @@ class _UserScreenState extends State<UserScreen> {
   final Map<String, String> _previousStatuses = {};
   bool _isInitialLoad = true;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _requestSubscription;
+  GoogleMapController? _mapController;
+  Set<Marker> _markers = {};
+  LatLng _currentPosition = const LatLng(24.8607, 67.0011); // Default Karachi
+  bool _mapLoading = true;
 
   @override
   void initState() {
     super.initState();
     NotificationService().init();
+    _getCurrentLocation();
+    _fetchPharmacyMarkers();
     // Delay listener setup to ensure widget is fully mounted
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _listenToRequestStatusChanges();
     });
+  }
+
+  Future<void> _getCurrentLocation() async {
+    try {
+      final position = await Geolocator.getCurrentPosition();
+      if (mounted) {
+        setState(() {
+          _currentPosition = LatLng(position.latitude, position.longitude);
+          _mapLoading = false;
+        });
+        _mapController?.animateCamera(
+          CameraUpdate.newLatLng(_currentPosition),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error getting location: $e');
+      if (mounted) setState(() => _mapLoading = false);
+    }
+  }
+
+  Future<void> _fetchPharmacyMarkers() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection('pharmacists').get();
+      final newMarkers = snapshot.docs.map((doc) {
+        final data = doc.data();
+        final lat = data['lat'] as double? ?? data['pharmacyLat'] as double?;
+        final lng = data['lng'] as double? ?? data['pharmacyLng'] as double?;
+        if (lat == null || lng == null) return null;
+
+        return Marker(
+          markerId: MarkerId(doc.id),
+          position: LatLng(lat, lng),
+          infoWindow: InfoWindow(
+            title: data['pharmacyName'] ?? data['displayName'] ?? 'Pharmacy',
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+        );
+      }).whereType<Marker>().toSet();
+
+      if (mounted) {
+        setState(() {
+          _markers = newMarkers;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching pharmacy markers: $e');
+    }
   }
 
   /// Listen to user's requests and show notification when status changes to 'accepted'
@@ -208,6 +263,8 @@ class _UserScreenState extends State<UserScreen> {
         medicineName: _searchCtrl.text.trim(),
         prescriptionUrl: url,
         broadcast: true,
+        userLat: _currentPosition.latitude,
+        userLng: _currentPosition.longitude,
       );
       _showSnack('Request sent to nearby pharmacies');
       setState(() => _prescription = null);
@@ -337,15 +394,81 @@ class _UserScreenState extends State<UserScreen> {
   Widget _mapPlaceholder() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16.0),
-      height: 220,
+      height: 250,
       decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
-      child: const Center(
-          child: Text('Map / Search results area',
-              style: TextStyle(color: Colors.black54))),
+      child: Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: _mapLoading 
+              ? const Center(child: CircularProgressIndicator())
+              : GoogleMap(
+                  onMapCreated: (controller) => _mapController = controller,
+                  initialCameraPosition: CameraPosition(
+                    target: _currentPosition,
+                    zoom: 14,
+                  ),
+                  markers: _markers,
+                  myLocationEnabled: true,
+                  myLocationButtonEnabled: false,
+                  zoomControlsEnabled: false,
+                  mapToolbarEnabled: false,
+                ),
+          ),
+          // Search pharmacies overlay
+          Positioned(
+            top: 12,
+            left: 12,
+            right: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.search, size: 20, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Search nearby pharmacies...',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // My Location Button
+          Positioned(
+            bottom: 12,
+            right: 12,
+            child: FloatingActionButton.small(
+              onPressed: _getCurrentLocation,
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.blue,
+              child: const Icon(Icons.my_location),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -437,10 +560,15 @@ class _UserScreenState extends State<UserScreen> {
                   String statusText;
 
                   switch (status) {
+                    case 'responded':
+                      statusColor = Colors.green;
+                      statusIcon = Icons.store;
+                      statusText = 'Pharmacist Responded';
+                      break;
                     case 'accepted':
                       statusColor = Colors.green;
                       statusIcon = Icons.check_circle;
-                      statusText = 'Accepted';
+                      statusText = 'Accepted (Delivery)';
                       break;
                     case 'delivering':
                       statusColor = Colors.orange;
@@ -461,6 +589,11 @@ class _UserScreenState extends State<UserScreen> {
                       statusColor = Colors.blue;
                       statusIcon = Icons.done_all;
                       statusText = 'Completed';
+                      break;
+                    case 'ready_for_pickup':
+                      statusColor = Colors.green;
+                      statusIcon = Icons.store;
+                      statusText = 'Ready for Pickup';
                       break;
                     default:
                       statusColor = Colors.grey;
@@ -486,7 +619,7 @@ class _UserScreenState extends State<UserScreen> {
                             title: Text(
                               displayName,
                               style: TextStyle(
-                                fontWeight: (status == 'accepted' || status == 'delivering')
+                                fontWeight: (status == 'responded' || status == 'accepted' || status == 'delivering')
                                     ? FontWeight.bold 
                                     : FontWeight.normal,
                               ),
@@ -508,7 +641,7 @@ class _UserScreenState extends State<UserScreen> {
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                    if ((status == 'accepted' || status == 'delivering') && acceptedBy != null)
+                                    if ((status == 'responded' || status == 'accepted' || status == 'delivering' || status == 'ready_for_pickup') && acceptedBy != null)
                                       FutureBuilder<DocumentSnapshot>(
                                         future: FirebaseFirestore.instance
                                             .collection('pharmacists')
@@ -540,8 +673,38 @@ class _UserScreenState extends State<UserScreen> {
                                       ),
                                   ],
                                 ),
-                                if (createdAt != null) ...[
+                                if (status == 'responded' && data['pharmacyLat'] != null) ...[
+                                  const SizedBox(height: 12),
+                                  const Text('Pharmacy Location:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                                   const SizedBox(height: 4),
+                                  Container(
+                                    height: 120,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.grey.shade300),
+                                    ),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: GoogleMap(
+                                        initialCameraPosition: CameraPosition(
+                                          target: LatLng(data['pharmacyLat'], data['pharmacyLng']),
+                                          zoom: 14,
+                                        ),
+                                        markers: {
+                                          Marker(
+                                            markerId: const MarkerId('pharmacy'),
+                                            position: LatLng(data['pharmacyLat'], data['pharmacyLng']),
+                                          ),
+                                        },
+                                        liteModeEnabled: true, // Optimized for list views
+                                        zoomGesturesEnabled: false,
+                                        scrollGesturesEnabled: false,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                if (createdAt != null) ...[
+                                  const SizedBox(height: 8),
                                   Text(
                                     _formatTimestamp(createdAt),
                                     style: TextStyle(
@@ -550,29 +713,14 @@ class _UserScreenState extends State<UserScreen> {
                                     ),
                                   ),
                                 ],
-                                if (prescriptionUrl != null) ...[
-                                  const SizedBox(height: 4),
-                                  Row(
-                                    children: [
-                                      Icon(Icons.image, 
-                                           size: 14, 
-                                           color: Colors.grey[600]),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        'Prescription attached',
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
                               ],
                             ),
-                            trailing: null,
                           ),
-                          // Add buttons if accepted or delivering
+                          // Add buttons if responded, accepted or delivering
+                          if (status == 'responded')
+                            _buildDecisionOptions(doc.id, data),
+                          if (status == 'ready_for_pickup')
+                            _buildPickupReadyOption(doc.id, data),
                           if (status == 'accepted')
                             _buildAcceptedOptions(doc.id, data),
                           if (status == 'delivering')
@@ -618,6 +766,80 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
+  Widget _buildDecisionOptions(String requestId, Map<String, dynamic> data) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Row(
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                // Change status to 'accepted' to notify riders
+                await RequestService.updateRequestStatus(requestId, 'accepted');
+              },
+              icon: const Icon(Icons.delivery_dining, size: 18),
+              label: const Text('Home Delivery'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () async {
+                // Change status to 'ready_for_pickup'
+                await RequestService.updateRequestStatus(requestId, 'ready_for_pickup');
+                if (mounted) {
+                   Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SelfPickupScreen(
+                        requestId: requestId,
+                        requestData: data,
+                      ),
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.store, size: 18),
+              label: const Text('Self Pickup'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPickupReadyOption(String requestId, Map<String, dynamic> data) {
+     return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SelfPickupScreen(
+                  requestId: requestId,
+                  requestData: data,
+                ),
+              ),
+            );
+          },
+          icon: const Icon(Icons.store),
+          label: const Text('View Pharmacy & Pickup'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.green,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildAcceptedOptions(String requestId, Map<String, dynamic> data) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -637,32 +859,10 @@ class _UserScreenState extends State<UserScreen> {
                 );
               },
               icon: const Icon(Icons.delivery_dining, size: 18),
-              label: const Text('Delivery'),
+              label: const Text('View Delivery Details'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 0, horizontal: 8),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => SelfPickupScreen(
-                      requestId: requestId,
-                      requestData: data,
-                    ),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.store, size: 18),
-              label: const Text('Pickup'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 0, horizontal: 8),
               ),
             ),
           ),

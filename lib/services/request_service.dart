@@ -51,7 +51,8 @@ class RequestService {
     String? prescriptionUrl,
     bool broadcast = true,
     String? pharmacyId,
-    Map<String, dynamic>? location,
+    double? userLat,
+    double? userLng,
     Map<String, dynamic>? meta,
   }) async {
     // Validate input
@@ -72,7 +73,8 @@ class RequestService {
       'pharmacyId': pharmacyId,
       'status': 'open', // open, accepted, cancelled, completed
       'createdAt': FieldValue.serverTimestamp(),
-      'location': location ?? {},
+      'userLat': userLat,
+      'userLng': userLng,
       'meta': meta ?? {},
     };
 
@@ -136,7 +138,7 @@ class RequestService {
 
   /// Mark request accepted by a pharmacy.
   /// Prevents race conditions by checking if request is still open before accepting.
-  static Future<void> acceptRequest(String requestId, String pharmacyId) async {
+  static Future<void> acceptRequest(String requestId, String pharmacyId, double lat, double lng) async {
     try {
       // Use a transaction to ensure the request is still open
       await _db.runTransaction((transaction) async {
@@ -157,9 +159,11 @@ class RequestService {
         }
         
         transaction.update(docRef, {
-          'status': 'accepted',
+          'status': 'responded',
           'acceptedBy': pharmacyId,
-          'acceptedAt': FieldValue.serverTimestamp(),
+          'pharmacyLat': lat,
+          'pharmacyLng': lng,
+          'respondedAt': FieldValue.serverTimestamp(),
         });
       });
     } on FirebaseException catch (e) {

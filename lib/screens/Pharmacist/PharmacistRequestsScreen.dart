@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:connect_pharma/services/request_service.dart';
 import 'package:connect_pharma/screens/ChatScreen.dart';
 import 'package:connect_pharma/widgets/FadeInSlide.dart';
+import 'package:geolocator/geolocator.dart';
 
 class PharmacistRequestsScreen extends StatefulWidget {
   const PharmacistRequestsScreen({super.key});
@@ -179,8 +180,39 @@ class _PharmacistRequestsScreenState extends State<PharmacistRequestsScreen>
 
   Future<void> _acceptRequest(String requestId) async {
     try {
-      await RequestService.acceptRequest(requestId, currentPharmacistId);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Request accepted')));
+      // 1. Check/Request location permission
+      bool serviceEnabled;
+      LocationPermission permission;
+
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        throw Exception('Location services are disabled.');
+      }
+
+      permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          throw Exception('Location permissions are denied');
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception('Location permissions are permanently denied.');
+      }
+
+      // 2. Get current position
+      final position = await Geolocator.getCurrentPosition();
+
+      // 3. Accept request with location
+      await RequestService.acceptRequest(
+        requestId, 
+        currentPharmacistId, 
+        position.latitude, 
+        position.longitude
+      );
+      
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Request accepted and location shared!')));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     }

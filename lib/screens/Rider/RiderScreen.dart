@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:connect_pharma/services/request_service.dart';
 import 'package:connect_pharma/screens/ChatScreen.dart';
 import 'package:connect_pharma/widgets/FadeInSlide.dart';
+import 'package:connect_pharma/screens/Rider/RiderMapScreen.dart';
 
 class RiderScreen extends StatefulWidget {
   const RiderScreen({super.key});
@@ -225,6 +226,23 @@ class _RiderScreenState extends State<RiderScreen> with SingleTickerProviderStat
                               label: const Text('Complete'),
                               style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
                               onPressed: () => _completeDelivery(doc.id),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.map),
+                              label: const Text('Map'),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => RiderMapScreen(
+                                      requestData: data,
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
                           ),
                           const SizedBox(width: 8),

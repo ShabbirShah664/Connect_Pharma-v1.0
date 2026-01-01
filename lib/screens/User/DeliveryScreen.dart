@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:connect_pharma/screens/ChatScreen.dart';
+import 'package:maps_launcher/maps_launcher.dart';
 
-class DeliveryScreen extends StatelessWidget {
+class DeliveryScreen extends StatefulWidget {
   final Map<String, dynamic> requestData;
   final String requestId;
 
@@ -10,6 +12,22 @@ class DeliveryScreen extends StatelessWidget {
     required this.requestData, 
     required this.requestId
   });
+
+  @override
+  State<DeliveryScreen> createState() => _DeliveryScreenState();
+}
+
+class _DeliveryScreenState extends State<DeliveryScreen> {
+  late LatLng _deliveryPosition;
+
+  @override
+  void initState() {
+    super.initState();
+    // Use the exact coordinates captured during request creation
+    final lat = widget.requestData['userLat'] as double? ?? 24.8607;
+    final lng = widget.requestData['userLng'] as double? ?? 67.0011;
+    _deliveryPosition = LatLng(lat, lng);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,36 +51,66 @@ class DeliveryScreen extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16, color: Colors.black54),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 20),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   children: [
-                     const ListTile(
-                      leading: Icon(Icons.location_on),
-                      title: Text('Delivery Address'),
-                      subtitle: Text('Your registered home address'), 
-                      // TODO: Fetch actual address
+                     ListTile(
+                      leading: const Icon(Icons.location_on),
+                      title: const Text('Delivery Address'),
+                      subtitle: const Text('Your current location'),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.navigation, color: Colors.blue),
+                        onPressed: () {
+                          MapsLauncher.launchCoordinates(
+                            _deliveryPosition.latitude,
+                            _deliveryPosition.longitude,
+                            'Delivery Address',
+                          );
+                        },
+                      ),
                     ),
                     const Divider(),
                     ListTile(
                       leading: const Icon(Icons.medication),
-                      title: Text(requestData['medicineName'] ?? 'Medicine'),
+                      title: Text(widget.requestData['medicineName'] ?? 'Medicine'),
                       subtitle: const Text('Package ready at pharmacy'),
                     ),
                   ],
                 ),
               ),
             ),
-            const Spacer(),
+            const SizedBox(height: 16),
+            // Map showing delivery location
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: GoogleMap(
+                  initialCameraPosition: CameraPosition(
+                    target: _deliveryPosition,
+                    zoom: 15,
+                  ),
+                  markers: {
+                    Marker(
+                      markerId: const MarkerId('delivery'),
+                      position: _deliveryPosition,
+                      infoWindow: const InfoWindow(title: 'Delivery Address'),
+                    ),
+                  },
+                  myLocationEnabled: true,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => ChatScreen(
-                      chatId: '${requestId}_rider', // Matches the ID used in RiderScreen
+                      chatId: '${widget.requestId}_rider', // Matches the ID used in RiderScreen
                       title: 'Chat with Rider',
                     ),
                   ),
@@ -83,7 +131,7 @@ class DeliveryScreen extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (_) => ChatScreen(
-                      chatId: requestId,
+                      chatId: widget.requestId,
                       title: 'Chat with Pharmacist',
                     ),
                   ),
@@ -98,7 +146,7 @@ class DeliveryScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            ElevatedButton(
+            OutlinedButton(
               onPressed: () {
                 // Return to home
                 Navigator.pop(context);

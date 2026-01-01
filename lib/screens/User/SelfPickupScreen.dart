@@ -1,14 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:maps_launcher/maps_launcher.dart';
 
-class SelfPickupScreen extends StatelessWidget {
+class SelfPickupScreen extends StatefulWidget {
   final Map<String, dynamic> requestData;
   final String requestId;
 
   const SelfPickupScreen({
     super.key, 
-    required this.requestData,
+    required this.requestData, 
     required this.requestId
   });
+
+  @override
+  State<SelfPickupScreen> createState() => _SelfPickupScreenState();
+}
+
+class _SelfPickupScreenState extends State<SelfPickupScreen> {
+  late LatLng _pharmacyPosition;
+
+  @override
+  void initState() {
+    super.initState();
+    // Use the coordinates shared by the pharmacist
+    final lat = widget.requestData['pharmacyLat'] as double? ?? 24.8607;
+    final lng = widget.requestData['pharmacyLng'] as double? ?? 67.0011;
+    _pharmacyPosition = LatLng(lat, lng);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,28 +59,51 @@ class SelfPickupScreen extends StatelessWidget {
                     ListTile(
                       leading: const Icon(Icons.store_mall_directory),
                       title: const Text('Pharmacy Location'),
-                      subtitle: Text('Pharmacy ID: ${requestData['acceptedBy'] ?? 'Unknown'}'),
-                      // TODO: Show actual pharmacy name and address
+                      subtitle: Text('ID: ${widget.requestData['acceptedBy'] ?? 'Unknown'}'),
                     ),
                     const Divider(),
-                    ListTile(
-                      leading: const Icon(Icons.access_time),
-                      title: const Text('Pickup Time'),
-                      subtitle: const Text('Available now'),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        MapsLauncher.launchCoordinates(
+                          _pharmacyPosition.latitude,
+                          _pharmacyPosition.longitude,
+                          'Pharmacy Location',
+                        );
+                      },
+                      icon: const Icon(Icons.navigation),
+                      label: const Text('Get Directions'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
-             const SizedBox(height: 20),
-            // Placeholder for map
-            Container(
-              height: 150,
-              color: Colors.grey[200],
-              child: const Center(child: Text('Map to Pharmacy')),
+            const SizedBox(height: 20),
+            // Map to Pharmacy
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: GoogleMap(
+                  initialCameraPosition: CameraPosition(
+                    target: _pharmacyPosition,
+                    zoom: 15,
+                  ),
+                  markers: {
+                    Marker(
+                      markerId: const MarkerId('pharmacy'),
+                      position: _pharmacyPosition,
+                      infoWindow: const InfoWindow(title: 'Pharmacy Location'),
+                    ),
+                  },
+                  myLocationEnabled: true,
+                ),
+              ),
             ),
-            const Spacer(),
-            ElevatedButton(
+            const SizedBox(height: 16),
+            OutlinedButton(
               onPressed: () {
                  Navigator.pop(context);
               },

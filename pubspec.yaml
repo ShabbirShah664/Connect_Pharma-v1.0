@@ -20,6 +20,7 @@ dependencies:
   flutter_local_notifications: ^19.5.0
   maps_launcher: any
   url_launcher: any
+  http: ^1.6.0
 
 flutter:
   uses-material-design: true

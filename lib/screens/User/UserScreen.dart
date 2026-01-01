@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:connect_pharma/services/notification_service.dart';
+import 'package:connect_pharma/services/ml_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -318,6 +319,230 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
+
+
+  Future<void> _showAISuggestions(String medicineName) async {
+    if (medicineName.isEmpty) {
+      _showSnack('Please enter a medicine name first');
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) {
+            return Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: const BoxDecoration(
+                    color: Colors.blueAccent,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.psychology, color: Colors.white),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'AI Alternatives',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: FutureBuilder<Map<String, dynamic>>(
+                    future: MLService.getAlternatives(medicineName),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              CircularProgressIndicator(),
+                              SizedBox(height: 16),
+                              Text('Consulting AI Pharmacist...'),
+                            ],
+                          ),
+                        );
+                      }
+
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Text(
+                              'Error: ${snapshot.error}\n\nMake sure the Python backend is running.',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        );
+                      }
+
+                      final data = snapshot.data!;
+                      final match = data['match'];
+                      final alternatives = data['alternatives'] as List<dynamic>?;
+                      final message = data['message'] as String?;
+
+                      if (match == null && (alternatives == null || alternatives.isEmpty)) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Text(
+                              message ?? 'No results found.', 
+                              style: const TextStyle(fontSize: 16),
+                            ),
+                          ),
+                        );
+                      }
+
+                      return ListView(
+                        controller: scrollController,
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          if (match != null) 
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              margin: const EdgeInsets.only(bottom: 16),
+                              decoration: BoxDecoration(
+                                color: Colors.green.shade50,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.green.shade200),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.check_circle, color: Colors.green),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Best Match',
+                                          style: TextStyle(
+                                            color: Colors.green,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        Text(
+                                          match,
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            
+                          const Text(
+                            'Suggested Alternatives',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          if (alternatives != null)
+                            ...alternatives.map<Widget>((alt) {
+                              final brand = alt['brand_name'];
+                              final formula = alt['formula'];
+                              final score = alt['match_score'];
+                              final price = alt['price'];
+
+                              return Card(
+                                elevation: 2,
+                                margin: const EdgeInsets.only(bottom: 12),
+                                child: ListTile(
+                                  title: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(brand, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue.shade50,
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          score,
+                                          style: TextStyle(
+                                            color: Colors.blue.shade800,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const SizedBox(height: 4),
+                                      Text('Formula: $formula'),
+                                      const SizedBox(height: 2),
+                                      Text('Price: $price', style: const TextStyle(fontWeight: FontWeight.w500)),
+                                    ],
+                                  ),
+                                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                                  onTap: () {
+                                    // Populate search bar with this alternative
+                                    _searchCtrl.text = brand;
+                                    Navigator.pop(context);
+                                    // Trigger search logic?
+                                  },
+                                ),
+                              );
+                            }).toList(),
+                            
+                            const SizedBox(height: 20),
+                            const Text(
+                              'Disclaimer: These are AI-generated suggestions. Always consult a certified pharmacist or doctor before changing medication.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.orange,
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Updated _searchBar to trigger AI on submit if configured, currently kept standard
   Widget _searchBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -342,10 +567,14 @@ class _UserScreenState extends State<UserScreen> {
                 return;
               }
 
+              // Auto-trigger AI on search?
+               _showAISuggestions(_searchCtrl.text.trim());
+
               await RequestService.createRequest(
                 userId: user.uid,
                 medicineName: _searchCtrl.text.trim(),
                 prescriptionUrl: null,
+                broadcast: true,
               );
 
               _showSnack('Request sent to pharmacies');
@@ -380,8 +609,7 @@ class _UserScreenState extends State<UserScreen> {
         const SizedBox(width: 10),
         Expanded(
           child: OutlinedButton(
-            onPressed: () =>
-                _showSnack('AI suggestions not implemented in template'),
+            onPressed: () => _showAISuggestions(_searchCtrl.text.trim()),
             style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14)),
             child: const Text('Ask For Suggestions'),

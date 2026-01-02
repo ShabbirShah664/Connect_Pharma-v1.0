@@ -11,6 +11,7 @@ plugins {
 android {
     namespace = "com.example.connect_pharma"
     compileSdk = flutter.compileSdkVersion
+    buildToolsVersion = "35.0.0"
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

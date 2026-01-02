@@ -268,8 +268,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
     return FadeInUp(
       child: SizedBox(
         width: double.infinity,
-        child: ElevatedButton(
+        child: ElevatedButton.icon(
           onPressed: _loading ? null : _submit,
+          icon: _loading ? Container() : const Icon(Icons.person_add_alt_1_outlined, size: 20),
+          label: _loading
+              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+              : Text(
+                  'SIGN UP',
+                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1),
+                ),
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF007BFF),
             foregroundColor: Colors.white,
@@ -279,12 +286,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
               borderRadius: BorderRadius.circular(10),
             ),
           ),
-          child: _loading
-              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-              : Text(
-                  'SIGN UP',
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1),
-                ),
         ),
       ),
     );

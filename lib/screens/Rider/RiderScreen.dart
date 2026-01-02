@@ -232,7 +232,7 @@ class _RiderScreenState extends State<RiderScreen> with SingleTickerProviderStat
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Santa Ana, Illinois 63456',
+                  data['userAddress'] ?? 'Nearby User Location',
                   style: GoogleFonts.inter(fontSize: 12, color: Colors.grey[600]),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -241,19 +241,32 @@ class _RiderScreenState extends State<RiderScreen> with SingleTickerProviderStat
           ),
           const SizedBox(height: 16),
           if (isNew)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => _startDelivery(requestId),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF007BFF),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => _startDelivery(requestId),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF007BFF),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: Text('Start Delivery', style: GoogleFonts.inter(fontWeight: FontWeight.bold)),
+                  ),
                 ),
-                child: Text('Start Delivery', style: GoogleFonts.inter(fontWeight: FontWeight.bold)),
-              ),
+                const SizedBox(width: 8),
+                _actionIconButton(Icons.map_outlined, () {
+                  final mapData = Map<String, dynamic>.from(data);
+                  mapData['id'] = requestId;
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => RiderMapScreen(requestData: mapData)));
+                }),
+                const SizedBox(width: 8),
+                _actionIconButton(Icons.chat_bubble_outline, () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(chatId: '${requestId}_rider', title: 'Chat with User')));
+                }),
+              ],
             )
           else
             Row(
@@ -272,7 +285,9 @@ class _RiderScreenState extends State<RiderScreen> with SingleTickerProviderStat
                 ),
                 const SizedBox(width: 8),
                 _actionIconButton(Icons.map_outlined, () {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => RiderMapScreen(requestData: data)));
+                  final mapData = Map<String, dynamic>.from(data);
+                  mapData['id'] = requestId;
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => RiderMapScreen(requestData: mapData)));
                 }),
                 const SizedBox(width: 8),
                 _actionIconButton(Icons.chat_bubble_outline, () {

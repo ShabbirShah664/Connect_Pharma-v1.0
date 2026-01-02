@@ -215,8 +215,15 @@ class _LoginScreenState extends State<LoginScreen> {
     return FadeInUp(
       child: SizedBox(
         width: double.infinity,
-        child: ElevatedButton(
+        child: ElevatedButton.icon(
           onPressed: _loading ? null : _login,
+          icon: _loading ? Container() : const Icon(Icons.login_outlined, size: 20),
+          label: _loading
+              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+              : Text(
+                  'Log in',
+                  style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF007BFF),
             foregroundColor: Colors.white,
@@ -226,12 +233,6 @@ class _LoginScreenState extends State<LoginScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
           ),
-          child: _loading
-              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-              : Text(
-                  'Log in',
-                  style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
         ),
       ),
     );

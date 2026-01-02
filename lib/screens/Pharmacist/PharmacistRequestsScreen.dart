@@ -6,6 +6,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:connect_pharma/services/request_service.dart';
 import 'package:connect_pharma/screens/ChatScreen.dart';
+import 'package:maps_launcher/maps_launcher.dart';
 
 class PharmacistRequestsScreen extends StatefulWidget {
   const PharmacistRequestsScreen({super.key});
@@ -42,7 +43,7 @@ class _PharmacistRequestsScreenState extends State<PharmacistRequestsScreen> {
         }
       }
 
-      final pos = await Geolocator.getCurrentPosition();
+      final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       if (mounted) {
         setState(() {
           _currentPosition = pos;
@@ -217,28 +218,59 @@ class _PharmacistRequestsScreenState extends State<PharmacistRequestsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(data['medicineName']?.toUpperCase() ?? 'MEDICINE', style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.location_on_outlined, size: 14, color: Colors.grey),
+              const SizedBox(width: 4),
+              Text(
+                _calculateDistanceString(data['userLat'], data['userLng']),
+                style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF007BFF), fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  data['userAddress'] ?? 'No address provided',
+                  style: GoogleFonts.inter(fontSize: 12, color: Colors.grey[600]),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.navigation_outlined, size: 18, color: Color(0xFF007BFF)),
+                onPressed: () {
+                  final lat = (data['userLat'] as num?)?.toDouble();
+                  final lng = (data['userLng'] as num?)?.toDouble();
+                  if (lat != null && lng != null) {
+                    MapsLauncher.launchCoordinates(lat, lng, 'User Location');
+                  }
+                },
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
-                child: ElevatedButton(
+                child: ElevatedButton.icon(
                   onPressed: () => _acceptRequest(requestId),
+                  icon: const Icon(Icons.check_circle_outline, size: 18),
+                  label: const Text('Available'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF007BFF),
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
-                  child: const Text('Available'),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: OutlinedButton(
+                child: OutlinedButton.icon(
                   onPressed: () => _cancelRequest(requestId),
+                  icon: const Icon(Icons.cancel_outlined, size: 18),
+                  label: const Text('Not Available'),
                   style: OutlinedButton.styleFrom(
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
-                  child: const Text('Not Available'),
                 ),
               ),
             ],
@@ -280,9 +312,19 @@ class _PharmacistRequestsScreenState extends State<PharmacistRequestsScreen> {
     );
   }
 
+  String _calculateDistanceString(dynamic uLat, dynamic uLng) {
+    if (uLat == null || uLng == null || _currentPosition == null) return "Locating...";
+    final distance = Geolocator.distanceBetween(
+      _currentPosition!.latitude, _currentPosition!.longitude, 
+      (uLat as num).toDouble(), (uLng as num).toDouble()
+    );
+    if (distance < 1000) return "${distance.toInt()}m";
+    return "${(distance / 1000).toStringAsFixed(1)}km";
+  }
+
   Future<void> _acceptRequest(String requestId) async {
     try {
-      final pos = await Geolocator.getCurrentPosition();
+      final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       await RequestService.acceptRequest(requestId, _currentPharmacistId, pos.latitude, pos.longitude);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Accepted!')));
     } catch (e) {

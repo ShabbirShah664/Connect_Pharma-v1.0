@@ -9,12 +9,17 @@ import 'package:connect_pharma/services/request_service.dart';
 import 'package:connect_pharma/widgets/FadeInSlide.dart';
 import 'package:connect_pharma/screens/User/DeliveryScreen.dart';
 import 'package:connect_pharma/screens/User/SelfPickupScreen.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:connect_pharma/screens/User/SearchingScreen.dart';
+import '../ChatScreen.dart';
 import 'package:connect_pharma/screens/User/ProfileScreen.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:maps_launcher/maps_launcher.dart';
+import 'package:connect_pharma/screens/User/TrackingMapScreen.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class UserScreen extends StatefulWidget {
   // ... existing code ...
@@ -27,16 +32,22 @@ class UserScreen extends StatefulWidget {
 
 class _UserScreenState extends State<UserScreen> {
   final _searchCtrl = TextEditingController();
+  final _locationCtrl = TextEditingController();
+  final _aiSearchCtrl = TextEditingController();
   bool _loading = false;
+  bool _geocodingLoading = false;
+  String _aiQuery = '';
   XFile? _prescription;
   final ImagePicker _picker = ImagePicker();
   // Track previous request statuses to detect changes
   final Map<String, String> _previousStatuses = {};
   bool _isInitialLoad = true;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _requestSubscription;
+  double? _curLat;
+  double? _curLng;
   GoogleMapController? _mapController;
   Set<Marker> _markers = {};
-  LatLng _currentPosition = const LatLng(24.8607, 67.0011); // Default Karachi
+  LatLng _currentPosition = const LatLng(24.8607, 67.0011);
   bool _mapLoading = true;
 
   @override
@@ -53,19 +64,110 @@ class _UserScreenState extends State<UserScreen> {
 
   Future<void> _getCurrentLocation() async {
     try {
-      final position = await Geolocator.getCurrentPosition();
+      if (mounted) setState(() => _mapLoading = true);
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) setState(() => _mapLoading = false);
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          if (mounted) setState(() => _mapLoading = false);
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) setState(() => _mapLoading = false);
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+      
       if (mounted) {
         setState(() {
+          _curLat = position.latitude;
+          _curLng = position.longitude;
           _currentPosition = LatLng(position.latitude, position.longitude);
           _mapLoading = false;
         });
         _mapController?.animateCamera(
           CameraUpdate.newLatLng(_currentPosition),
         );
+        _getAddressFromLatLng(position.latitude, position.longitude);
       }
     } catch (e) {
       debugPrint('Error getting location: $e');
       if (mounted) setState(() => _mapLoading = false);
+    }
+  }
+
+  Future<void> _getAddressFromLatLng(double lat, double lng) async {
+    if (kIsWeb) {
+      if (mounted) {
+        setState(() {
+          _locationCtrl.text = "Precise Web Location (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})";
+        });
+      }
+      return;
+    }
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(lat, lng);
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks[0];
+        String address = "${place.street}, ${place.subLocality ?? ''}, ${place.locality ?? ''} ${place.postalCode ?? ''}";
+        // Clean up double commas or leading/trailing commas if any parts are empty
+        address = address.replaceAll(RegExp(r',\s*,'), ',').trim();
+        if (address.startsWith(',')) address = address.substring(1).trim();
+        if (address.endsWith(',')) address = address.substring(0, address.length - 1).trim();
+
+        if (mounted) {
+          setState(() {
+            _locationCtrl.text = address;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error getting address: $e');
+    }
+  }
+
+  Future<void> _getLatLngFromAddress(String address) async {
+    if (address.isEmpty) return;
+    if (kIsWeb) {
+      _showSnack('Address search is restricted on web for now. Please use current location.');
+      return;
+    }
+    if (mounted) setState(() => _geocodingLoading = true);
+    try {
+      List<Location> locations = await locationFromAddress(address);
+      if (locations.isNotEmpty) {
+        Location loc = locations[0];
+        LatLng newPos = LatLng(loc.latitude, loc.longitude);
+        if (mounted) {
+          setState(() {
+            _curLat = loc.latitude;
+            _curLng = loc.longitude;
+            _currentPosition = newPos;
+            _geocodingLoading = false;
+          });
+          _mapController?.animateCamera(
+            CameraUpdate.newLatLng(newPos),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error getting coordinates: $e');
+      if (mounted) {
+        setState(() => _geocodingLoading = false);
+        _showSnack('Could not find location. Please check the address.');
+      }
     }
   }
 
@@ -74,8 +176,8 @@ class _UserScreenState extends State<UserScreen> {
       final snapshot = await FirebaseFirestore.instance.collection('pharmacists').get();
       final newMarkers = snapshot.docs.map((doc) {
         final data = doc.data();
-        final lat = data['lat'] as double? ?? data['pharmacyLat'] as double?;
-        final lng = data['lng'] as double? ?? data['pharmacyLng'] as double?;
+        final lat = (data['lat'] as num?)?.toDouble() ?? (data['pharmacyLat'] as num?)?.toDouble();
+        final lng = (data['lng'] as num?)?.toDouble() ?? (data['pharmacyLng'] as num?)?.toDouble();
         if (lat == null || lng == null) return null;
 
         return Marker(
@@ -263,6 +365,15 @@ class _UserScreenState extends State<UserScreen> {
       return;
     }
 
+    if (_curLat == null || _curLng == null) {
+      await _getCurrentLocation();
+      if (_curLat == null || _curLng == null) {
+        _showSnack('Unable to get precise location. Please ensure location services are enabled.');
+        setState(() => _loading = false);
+        return;
+      }
+    }
+
     setState(() => _loading = true);
     try {
       String? url;
@@ -275,8 +386,9 @@ class _UserScreenState extends State<UserScreen> {
         medicineName: medicineName.isEmpty ? "Prescription Request" : medicineName,
         prescriptionUrl: url,
         broadcast: true,
-        userLat: _currentPosition.latitude,
-        userLng: _currentPosition.longitude,
+        userLat: _curLat!,
+        userLng: _curLng!,
+        userAddress: _locationCtrl.text.trim(),
       );
       
       if (mounted) {
@@ -304,41 +416,6 @@ class _UserScreenState extends State<UserScreen> {
   void _showSnack(String m) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
-  @override
-  Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        final shouldLogout = await _showLogoutDialog();
-        if (shouldLogout == true && mounted) {
-          await FirebaseAuth.instance.signOut();
-          Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
-        }
-      },
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF8F9FA),
-        body: SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              children: [
-                _profileHeader(),
-                const SizedBox(height: 8),
-                _searchBar(),
-                const SizedBox(height: 12),
-                _actionButtons(),
-                const SizedBox(height: 12),
-                _mapPlaceholder(),
-                const SizedBox(height: 8),
-                _recentRequestsCard(),
-                const SizedBox(height: 20),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   Future<bool?> _showLogoutDialog() async {
     return showDialog<bool>(
@@ -359,40 +436,6 @@ class _UserScreenState extends State<UserScreen> {
       ),
     );
   }
-
-  Widget _profileHeader() {
-    final user = FirebaseAuth.instance.currentUser;
-    final displayName = user?.displayName ?? 'Guest User';
-    final email = user?.email ?? '';
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12),
-      child: Row(children: [
-        CircleAvatar(radius: 26, child: const Icon(Icons.person)),
-        const SizedBox(width: 12),
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(displayName,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 2),
-            Text(email, style: const TextStyle(color: Colors.grey)),
-          ]),
-        ),
-        IconButton(
-          icon: const Icon(Icons.logout),
-          onPressed: () async {
-            final shouldLogout = await _showLogoutDialog();
-            if (shouldLogout == true && mounted) {
-              await FirebaseAuth.instance.signOut();
-              Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
-            }
-          },
-        )
-      ]),
-    );
-  }
-
 
 
   Future<void> _showAISuggestions(String medicineName) async {
@@ -616,561 +659,6 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
-  // Updated _searchBar to trigger AI on submit if configured, currently kept standard
-  Widget _searchBar() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Row(children: [
-        Expanded(
-          child: TextField(
-            controller: _searchCtrl,
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search),
-              hintText: 'Search medicine by name',
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none),
-            ),
-            onSubmitted: (_) => _initiateRequest(),
-          ),
-        ),
-        const SizedBox(width: 8),
-        IconButton(
-            icon: const Icon(Icons.upload_file), onPressed: _pickPrescription),
-      ]),
-    );
-  }
-
-  Widget _actionButtons() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12),
-      child: Row(children: [
-        Expanded(
-          child: ElevatedButton(
-            onPressed: _loading ? null : _uploadAndBroadcast,
-            style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14)),
-            child: _loading
-                ? const SizedBox(
-                    height: 18,
-                    width: 18,
-                    child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2))
-                : const Text('Upload Prescription'),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: OutlinedButton(
-            onPressed: () => _showAISuggestions(_searchCtrl.text.trim()),
-            style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14)),
-            child: const Text('Ask For Suggestions'),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _mapPlaceholder() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16.0),
-      height: 250,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Stack(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: _mapLoading 
-              ? const Center(child: CircularProgressIndicator())
-              : GoogleMap(
-                  onMapCreated: (controller) => _mapController = controller,
-                  initialCameraPosition: CameraPosition(
-                    target: _currentPosition,
-                    zoom: 14,
-                  ),
-                  markers: _markers,
-                  myLocationEnabled: true,
-                  myLocationButtonEnabled: false,
-                  zoomControlsEnabled: false,
-                  mapToolbarEnabled: false,
-                ),
-          ),
-          // Search pharmacies overlay
-          Positioned(
-            top: 12,
-            left: 12,
-            right: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 8,
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.search, size: 20, color: Colors.grey),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Search nearby pharmacies...',
-                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // My Location Button
-          Positioned(
-            bottom: 12,
-            right: 12,
-            child: FloatingActionButton.small(
-              onPressed: _getCurrentLocation,
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.blue,
-              child: const Icon(Icons.my_location),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _recentRequestsCard() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      return const SizedBox.shrink();
-    }
-
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'My Requests',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: RequestService.streamRequestsForUser(user.uid),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(20.0),
-                    child: CircularProgressIndicator(),
-                  ),
-                );
-              }
-
-              if (snapshot.hasError) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20.0),
-                    child: Text('Error: ${snapshot.error}'),
-                  ),
-                );
-              }
-
-              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20.0),
-                    child: Center(
-                      child: Text(
-                        'No requests yet',
-                        style: TextStyle(color: Colors.grey[600]),
-                      ),
-                    ),
-                  ),
-                );
-              }
-
-              final docs = snapshot.data!.docs;
-              
-              // Sort documents by createdAt (most recent first) since we removed orderBy from query
-              final sortedDocs = docs.toList()
-                ..sort((a, b) {
-                  final aTime = a.data()['createdAt'] as Timestamp?;
-                  final bTime = b.data()['createdAt'] as Timestamp?;
-                  if (aTime == null && bTime == null) return 0;
-                  if (aTime == null) return 1;
-                  if (bTime == null) return -1;
-                  return bTime.compareTo(aTime); // Descending order (most recent first)
-                });
-
-              return Column(
-                children: sortedDocs.asMap().entries.map((entry) {
-                  final index = entry.key;
-                  final doc = entry.value;
-                  final data = doc.data();
-                  final status = data['status'] as String? ?? 'unknown';
-                  final medicineName = data['medicineName'] as String? ?? '';
-                  final createdAt = data['createdAt'] as Timestamp?;
-                  final acceptedBy = data['acceptedBy'] as String?;
-                  final prescriptionUrl = data['prescriptionUrl'] as String?;
-
-                  // Format medicine name
-                  final displayName = medicineName.isEmpty
-                      ? 'Unknown Medicine'
-                      : medicineName.length > 1
-                          ? medicineName[0].toUpperCase() + medicineName.substring(1)
-                          : medicineName.toUpperCase();
-
-                  // Determine status color and icon
-                  Color statusColor;
-                  IconData statusIcon;
-                  String statusText;
-
-                  switch (status) {
-                    case 'responded':
-                      statusColor = Colors.green;
-                      statusIcon = Icons.store;
-                      statusText = 'Pharmacist Responded';
-                      break;
-                    case 'accepted':
-                      statusColor = Colors.green;
-                      statusIcon = Icons.check_circle;
-                      statusText = 'Accepted (Delivery)';
-                      break;
-                    case 'delivering':
-                      statusColor = Colors.orange;
-                      statusIcon = Icons.delivery_dining;
-                      statusText = 'Out for Delivery';
-                      break;
-                    case 'open':
-                      statusColor = Colors.orange;
-                      statusIcon = Icons.pending;
-                      statusText = 'Pending';
-                      break;
-                    case 'cancelled':
-                      statusColor = Colors.grey;
-                      statusIcon = Icons.cancel;
-                      statusText = 'Cancelled';
-                      break;
-                    case 'completed':
-                      statusColor = Colors.blue;
-                      statusIcon = Icons.done_all;
-                      statusText = 'Completed';
-                      break;
-                    case 'ready_for_pickup':
-                      statusColor = Colors.green;
-                      statusIcon = Icons.store;
-                      statusText = 'Ready for Pickup';
-                      break;
-                    default:
-                      statusColor = Colors.grey;
-                      statusIcon = Icons.help_outline;
-                      statusText = status;
-                  }
-
-                  // Changed list tile to be inside a column to allow extra buttons at bottom
-                  return FadeInSlide(
-                    index: index,
-                    child: Card(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      elevation: (status == 'accepted' || status == 'delivering') ? 4 : 2,
-                      color: (status == 'accepted' || status == 'delivering') ? Colors.green.shade50 : null,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: statusColor.withOpacity(0.2),
-                              child: Icon(statusIcon, color: statusColor, size: 24),
-                            ),
-                            title: Text(
-                              displayName,
-                              style: TextStyle(
-                                fontWeight: (status == 'responded' || status == 'accepted' || status == 'delivering')
-                                    ? FontWeight.bold 
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    Icon(statusIcon, 
-                                         color: statusColor, 
-                                         size: 16),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      statusText,
-                                      style: TextStyle(
-                                        color: statusColor,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    if ((status == 'responded' || status == 'accepted' || status == 'delivering' || status == 'ready_for_pickup') && acceptedBy != null)
-                                      FutureBuilder<DocumentSnapshot>(
-                                        future: FirebaseFirestore.instance
-                                            .collection('pharmacists')
-                                            .doc(acceptedBy)
-                                            .get(),
-                                        builder: (context, pharmacySnapshot) {
-                                          if (pharmacySnapshot.hasData &&
-                                              pharmacySnapshot.data!.exists) {
-                                            final pharmacyData = 
-                                                pharmacySnapshot.data!.data() as Map<String, dynamic>?;
-                                            final pharmacyName = 
-                                                pharmacyData?['displayName'] as String? ?? 
-                                                pharmacyData?['pharmacyName'] as String? ?? 
-                                                pharmacyData?['name'] as String? ?? 
-                                                'Pharmacy';
-                                            return Padding(
-                                              padding: const EdgeInsets.only(left: 8),
-                                              child: Text(
-                                                'by $pharmacyName',
-                                                style: TextStyle(
-                                                  color: Colors.green.shade700,
-                                                  fontWeight: FontWeight.w500,
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                          return const SizedBox.shrink();
-                                        },
-                                      ),
-                                  ],
-                                ),
-                                if (status == 'responded' && data['pharmacyLat'] != null) ...[
-                                  const SizedBox(height: 12),
-                                  const Text('Pharmacy Location:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                  const SizedBox(height: 4),
-                                  Container(
-                                    height: 120,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(color: Colors.grey.shade300),
-                                    ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: GoogleMap(
-                                        initialCameraPosition: CameraPosition(
-                                          target: LatLng(data['pharmacyLat'], data['pharmacyLng']),
-                                          zoom: 14,
-                                        ),
-                                        markers: {
-                                          Marker(
-                                            markerId: const MarkerId('pharmacy'),
-                                            position: LatLng(data['pharmacyLat'], data['pharmacyLng']),
-                                          ),
-                                        },
-                                        liteModeEnabled: true, // Optimized for list views
-                                        zoomGesturesEnabled: false,
-                                        scrollGesturesEnabled: false,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                                if (createdAt != null) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    _formatTimestamp(createdAt),
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          // Add buttons if responded, accepted or delivering
-                          if (status == 'responded')
-                            _buildDecisionOptions(doc.id, data),
-                          if (status == 'ready_for_pickup')
-                            _buildPickupReadyOption(doc.id, data),
-                          if (status == 'accepted')
-                            _buildAcceptedOptions(doc.id, data),
-                          if (status == 'delivering')
-                             _buildTrackDeliveryOption(doc.id, data),
-                        ],
-                      ),
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTrackDeliveryOption(String requestId, Map<String, dynamic> data) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => DeliveryScreen(
-                  requestId: requestId,
-                  requestData: data,
-                ),
-              ),
-            );
-          },
-          icon: const Icon(Icons.location_on),
-          label: const Text('Track Delivery & Chat'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.orange,
-            foregroundColor: Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDecisionOptions(String requestId, Map<String, dynamic> data) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: Row(
-        children: [
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: () async {
-                // Change status to 'accepted' to notify riders
-                await RequestService.updateRequestStatus(requestId, 'accepted');
-              },
-              icon: const Icon(Icons.delivery_dining, size: 18),
-              label: const Text('Home Delivery'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () async {
-                // Change status to 'ready_for_pickup'
-                await RequestService.updateRequestStatus(requestId, 'ready_for_pickup');
-                if (mounted) {
-                   Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => SelfPickupScreen(
-                        requestId: requestId,
-                        requestData: data,
-                      ),
-                    ),
-                  );
-                }
-              },
-              icon: const Icon(Icons.store, size: 18),
-              label: const Text('Self Pickup'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPickupReadyOption(String requestId, Map<String, dynamic> data) {
-     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => SelfPickupScreen(
-                  requestId: requestId,
-                  requestData: data,
-                ),
-              ),
-            );
-          },
-          icon: const Icon(Icons.store),
-          label: const Text('View Pharmacy & Pickup'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAcceptedOptions(String requestId, Map<String, dynamic> data) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: Row(
-        children: [
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => DeliveryScreen(
-                      requestId: requestId,
-                      requestData: data,
-                    ),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.delivery_dining, size: 18),
-              label: const Text('View Delivery Details'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatTimestamp(Timestamp timestamp) {
-    final now = DateTime.now();
-    final time = timestamp.toDate();
-    final difference = now.difference(time);
-
-    if (difference.inDays > 0) {
-      return '${difference.inDays} day${difference.inDays > 1 ? 's' : ''} ago';
-    } else if (difference.inHours > 0) {
-      return '${difference.inHours} hour${difference.inHours > 1 ? 's' : ''} ago';
-    } else if (difference.inMinutes > 0) {
-      return '${difference.inMinutes} minute${difference.inMinutes > 1 ? 's' : ''} ago';
-    } else {
-      return 'Just now';
-    }
-  }
-
   int _currentIndex = 0;
 
   void _onNavItemTapped(int index) {
@@ -1179,18 +667,29 @@ class _UserScreenState extends State<UserScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: IndexedStack(
-        index: _currentIndex,
-        children: [
-          _buildDashboard(),
-          _buildPlaceholder('Tracker'),
-          const ProfileScreen(),
-          _buildPlaceholder('AI Suggestions'),
-        ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final shouldLogout = await _showLogoutDialog();
+        if (shouldLogout == true && mounted) {
+          await FirebaseAuth.instance.signOut();
+          Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: IndexedStack(
+          index: _currentIndex,
+          children: [
+            _buildDashboard(),
+            _buildTrackerTab(),
+            const ProfileScreen(),
+            _buildAISuggestionsTab(),
+          ],
+        ),
+        bottomNavigationBar: _buildBottomNav(),
       ),
-      bottomNavigationBar: _buildBottomNav(),
     );
   }
 
@@ -1232,6 +731,572 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
+  Widget _buildTrackerTab() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return _buildPlaceholder('Tracker');
+
+    return SafeArea(
+      child: Column(
+        children: [
+          _buildCustomHeader(),
+          Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Order Tracker',
+                  style: GoogleFonts.inter(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const Icon(Icons.track_changes, color: Color(0xFF007BFF)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: RequestService.streamRequestsForUser(user.uid),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return _buildEmptyTrackerState();
+                }
+
+                final docs = snapshot.data!.docs;
+                // Sort by creation time manually as per RequestService note
+                final sortedDocs = docs.toList()
+                  ..sort((a, b) {
+                    final aTime = (a.data()['createdAt'] as Timestamp?)?.toDate() ?? DateTime(0);
+                    final bTime = (b.data()['createdAt'] as Timestamp?)?.toDate() ?? DateTime(0);
+                    return bTime.compareTo(aTime);
+                  });
+
+                final activeRequests = sortedDocs.where((doc) {
+                  final status = doc.data()['status'] ?? '';
+                  return status != 'completed' && status != 'cancelled';
+                }).toList();
+
+                if (activeRequests.isEmpty) {
+                  return _buildEmptyTrackerState();
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  itemCount: activeRequests.length,
+                  itemBuilder: (context, index) {
+                    final data = activeRequests[index].data();
+                    return _buildRequestTrackingCard(data, activeRequests[index].id);
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyTrackerState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.shopping_bag_outlined, size: 60, color: Colors.grey[200]),
+          const SizedBox(height: 16),
+          Text(
+            'No active orders found',
+            style: GoogleFonts.inter(color: Colors.grey[400], fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Go to home to find medicines',
+            style: GoogleFonts.inter(color: Colors.grey[400], fontSize: 13),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: () => setState(() => _currentIndex = 0),
+            child: const Text('Find Medicine'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRequestTrackingCard(Map<String, dynamic> data, String requestId) {
+    final status = data['status'] ?? 'open';
+    final medicineName = data['medicineName'] ?? 'Medicine';
+    
+    return FadeInUp(
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey[100]!),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.03),
+              blurRadius: 15,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              medicineName.toUpperCase(),
+                              style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            Text(
+                              'Order #$requestId'.substring(0, 15) + '...',
+                              style: GoogleFonts.inter(fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _buildStatusBadge(status),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  _buildTrackingStepper(status),
+                ],
+              ),
+            ),
+            if (status != 'open') ...[
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => TrackingMapScreen(requestId: requestId, initialData: data)));
+                        },
+                        icon: const Icon(Icons.map_outlined, size: 18),
+                        label: const Text('Live Track'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF007BFF),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _openNavigation(data),
+                        icon: const Icon(Icons.navigation_outlined, size: 18),
+                        label: const Text('Navigate'),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(chatId: requestId, title: 'Chat')));
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.chat_bubble_outline, size: 20, color: Color(0xFF007BFF)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(String status) {
+    Color color;
+    String text;
+    switch (status) {
+      case 'open':
+        color = Colors.orange;
+        text = 'Searching';
+        break;
+      case 'responded':
+        color = Colors.blue;
+        text = 'Responded';
+        break;
+      case 'accepted':
+        color = Colors.teal;
+        text = 'Confirmed';
+        break;
+      case 'delivering':
+        color = Colors.purple;
+        text = 'In Transit';
+        break;
+      case 'ready_for_pickup':
+        color = Colors.green;
+        text = 'Ready for Pickup';
+        break;
+      default:
+        color = Colors.grey;
+        text = status;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: GoogleFonts.inter(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrackingStepper(String status) {
+    int currentStep = 0;
+    if (status == 'responded' || status == 'accepted') currentStep = 1;
+    if (status == 'delivering' || status == 'ready_for_pickup') currentStep = 2;
+    if (status == 'completed') currentStep = 3;
+
+    return Row(
+      children: [
+        _stepperNode('Req', currentStep >= 0),
+        _stepperLine(currentStep >= 1),
+        _stepperNode('Appr', currentStep >= 1),
+        _stepperLine(currentStep >= 2),
+        _stepperNode('Proc', currentStep >= 2),
+        _stepperLine(currentStep >= 3),
+        _stepperNode('End', currentStep >= 3),
+      ],
+    );
+  }
+
+  Widget _stepperNode(String label, bool active) {
+    return Column(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: active ? const Color(0xFF007BFF) : Colors.grey[200],
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: GoogleFonts.inter(fontSize: 8, color: active ? Colors.black87 : Colors.grey)),
+      ],
+    );
+  }
+
+  Widget _stepperLine(bool active) {
+    return Expanded(
+      child: Container(
+        height: 2,
+        margin: const EdgeInsets.only(bottom: 12),
+        color: active ? const Color(0xFF007BFF).withOpacity(0.5) : Colors.grey[200],
+      ),
+    );
+  }
+
+  void _openNavigation(Map<String, dynamic> data) {
+    final status = data['status'] ?? '';
+    
+    // If delivering, try to navigate to rider's current location first
+    if (status == 'delivering') {
+      final rLat = (data['riderLat'] as num?)?.toDouble();
+      final rLng = (data['riderLng'] as num?)?.toDouble();
+      if (rLat != null && rLng != null) {
+        MapsLauncher.launchCoordinates(rLat, rLng, 'Rider Location');
+        return;
+      }
+    }
+
+    // Otherwise navigate to Pharmacy
+    final pLat = (data['pharmacyLat'] as num?)?.toDouble() ?? (data['lat'] as num?)?.toDouble();
+    final pLng = (data['pharmacyLng'] as num?)?.toDouble() ?? (data['lng'] as num?)?.toDouble();
+    
+    if (pLat != null && pLng != null) {
+      MapsLauncher.launchCoordinates(pLat, pLng, 'Pharmacy Location');
+    } else {
+      _showSnack('Location not available');
+    }
+  }
+
+  Widget _buildAISuggestionsTab() {
+    return SafeArea(
+      child: Column(
+        children: [
+          _buildCustomHeader(),
+          Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'AI Medicine Link',
+                  style: GoogleFonts.inter(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blueAccent,
+                  ),
+                ),
+                Text(
+                  'Find smart alternatives powered by ML',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFFBFBFB),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: TextField(
+                controller: _aiSearchCtrl,
+                onSubmitted: (value) {
+                  setState(() => _aiQuery = value.trim());
+                },
+                decoration: InputDecoration(
+                  hintText: 'Enter medicine name...',
+                  hintStyle: GoogleFonts.inter(color: Colors.grey[400], fontSize: 13),
+                  prefixIcon: Icon(Icons.psychology, color: Colors.blueAccent),
+                  suffixIcon: IconButton(
+                    icon: Icon(Icons.search, color: Colors.blueAccent),
+                    onPressed: () {
+                      setState(() => _aiQuery = _aiSearchCtrl.text.trim());
+                    },
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Expanded(
+            child: _aiQuery.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.medication_outlined, size: 60, color: Colors.grey[200]),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Enter a medicine name above\nto find alternatives',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(color: Colors.grey[400]),
+                        ),
+                      ],
+                    ),
+                  )
+                : FutureBuilder<Map<String, dynamic>>(
+                    future: MLService.getAlternatives(_aiQuery),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError || (snapshot.hasData && snapshot.data!['match'] == null && (snapshot.data!['alternatives'] as List).isEmpty)) {
+                         return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(32.0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.error_outline, size: 48, color: Colors.orange[200]),
+                                const SizedBox(height: 16),
+                                Text(
+                                  snapshot.hasError 
+                                    ? 'Error connecting to ML Service' 
+                                    : (snapshot.data?['message'] ?? 'No results found for "$_aiQuery"'),
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.inter(color: Colors.grey[600]),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+
+                      final data = snapshot.data!;
+                      final match = data['match'];
+                      final alternatives = data['alternatives'] as List<dynamic>?;
+
+                      return ListView(
+                        padding: const EdgeInsets.all(24),
+                        children: [
+                          if (match != null) ...[
+                            _buildAISectionTitle('Best Match'),
+                            const SizedBox(height: 12),
+                            _buildAIMatchCard(match),
+                            const SizedBox(height: 24),
+                          ],
+                          if (alternatives != null && alternatives.isNotEmpty) ...[
+                            _buildAISectionTitle('Suggested Alternatives'),
+                            const SizedBox(height: 12),
+                            ...alternatives.map((alt) => _buildAIAltCard(alt)).toList(),
+                          ],
+                          const SizedBox(height: 20),
+                          const Text(
+                            'Disclaimer: These are AI-generated suggestions. Always consult a professional.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.orange, fontSize: 11, fontStyle: FontStyle.italic),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAISectionTitle(String title) {
+    return Text(
+      title.toUpperCase(),
+      style: GoogleFonts.inter(
+        fontSize: 12,
+        fontWeight: FontWeight.w800,
+        color: Colors.grey[400],
+        letterSpacing: 1.2,
+      ),
+    );
+  }
+
+  Widget _buildAIMatchCard(String name) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.blueAccent, Colors.blueAccent.withOpacity(0.8)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blueAccent.withOpacity(0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.verified, color: Colors.white, size: 32),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                Text(
+                  'Direct Formula Match',
+                  style: GoogleFonts.inter(color: Colors.white.withOpacity(0.8), fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAIAltCard(dynamic alt) {
+    final brand = alt['brand_name'] ?? 'Unknown';
+    final formula = alt['formula'] ?? 'N/A';
+    final score = alt['match_score'] ?? '0%';
+    final price = alt['price'] ?? 'N/A';
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey[100]!),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.all(16),
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(brand, style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 16)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                score,
+                style: GoogleFonts.inter(
+                  color: Colors.blue[700],
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Text('Formula: $formula', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+            const SizedBox(height: 4),
+            Text('Price: $price', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: Colors.black87)),
+          ],
+        ),
+        trailing: Icon(Icons.add_circle_outline, color: Colors.blueAccent),
+        onTap: () {
+          _searchCtrl.text = brand;
+          setState(() => _currentIndex = 0);
+          _showSnack('Selected $brand. You can now tap FIND to search stores.');
+        },
+      ),
+    );
+  }
+
   Widget _buildPlaceholder(String title) {
     return SafeArea(
       child: Center(
@@ -1243,9 +1308,10 @@ class _UserScreenState extends State<UserScreen> {
             Text(title, style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey)),
             Text('Coming Soon!', style: GoogleFonts.inter(color: Colors.grey)),
             const SizedBox(height: 20),
-            ElevatedButton(
+            ElevatedButton.icon(
               onPressed: () => setState(() => _currentIndex = 0),
-              child: const Text('Go Home'),
+              icon: const Icon(Icons.home_outlined, size: 18),
+              label: const Text('Go Home'),
             ),
           ],
         ),
@@ -1319,6 +1385,7 @@ class _UserScreenState extends State<UserScreen> {
               'Upload Prescription',
               const Color(0xFF007BFF),
               Colors.white,
+              Icons.upload_file_outlined,
               _pickPrescription,
             ),
             const SizedBox(height: 12),
@@ -1326,6 +1393,7 @@ class _UserScreenState extends State<UserScreen> {
               'Ask For Suggestions',
               const Color(0xFFE7F3FF),
               const Color(0xFF007BFF),
+              Icons.psychology_outlined,
               () => _showAISuggestions(_searchCtrl.text.trim()),
             ),
           ],
@@ -1334,21 +1402,22 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
-  Widget _featureButton(String text, Color bgColor, Color textColor, VoidCallback onTap) {
+  Widget _featureButton(String text, Color bgColor, Color textColor, IconData icon, VoidCallback onTap) {
     return SizedBox(
       width: double.infinity,
-      child: ElevatedButton(
+      child: ElevatedButton.icon(
         onPressed: _loading ? null : onTap,
+        icon: Icon(icon, size: 20),
+        label: Text(
+          text,
+          style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
         style: ElevatedButton.styleFrom(
           backgroundColor: bgColor,
           foregroundColor: textColor,
           elevation: 0,
           padding: const EdgeInsets.symmetric(vertical: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        child: Text(
-          text,
-          style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 14),
         ),
       ),
     );
@@ -1363,17 +1432,31 @@ class _UserScreenState extends State<UserScreen> {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: Colors.grey[200]!),
-          image: const DecorationImage(
-            image: NetworkImage('https://via.placeholder.com/600x400/F5F5F5/808080?text=Map+Preview'),
-            fit: BoxFit.cover,
-            opacity: 0.6,
-          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
-        child: const Center(
-          child: Icon(Icons.location_on, color: Colors.red, size: 40),
+        child: _mapLoading
+              ? const Center(child: CircularProgressIndicator())
+                : GoogleMap(
+                  onMapCreated: (controller) => _mapController = controller,
+                  initialCameraPosition: CameraPosition(
+                    target: _currentPosition,
+                    zoom: 14,
+                  ),
+                  mapType: MapType.normal,
+                  markers: _markers,
+                  myLocationEnabled: true,
+                  myLocationButtonEnabled: false,
+                  zoomControlsEnabled: false,
+                  mapToolbarEnabled: false,
+                ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _buildLocationCard() {
@@ -1384,29 +1467,59 @@ class _UserScreenState extends State<UserScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Select Location',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Your Location',
-              style: GoogleFonts.inter(
-                fontSize: 12,
-                color: Colors.grey[500],
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Select Location',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _mapLoading ? null : _getCurrentLocation,
+                  icon: const Icon(Icons.my_location, size: 16),
+                  label: const Text('Live', style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    foregroundColor: const Color(0xFF007BFF),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
-            Text(
-              '2572 Westhaven Rd, Santa Ana, Illinois 63456', // Dummy address as per image
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                color: Colors.grey[700],
-                fontWeight: FontWeight.w500,
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFFBFBFB),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: TextField(
+                controller: _locationCtrl,
+                style: GoogleFonts.inter(fontSize: 13, color: Colors.grey[700]),
+                onSubmitted: (value) => _getLatLngFromAddress(value),
+                decoration: InputDecoration(
+                  hintText: 'Enter your address manually',
+                  hintStyle: GoogleFonts.inter(color: Colors.grey[400], fontSize: 13),
+                  prefixIcon: Icon(Icons.location_on_outlined, color: Colors.grey[400], size: 20),
+                  suffixIcon: _geocodingLoading 
+                    ? const Padding(
+                        padding: EdgeInsets.all(12.0),
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : IconButton(
+                        icon: const Icon(Icons.search, size: 20),
+                        onPressed: () => _getLatLngFromAddress(_locationCtrl.text),
+                      ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                ),
               ),
             ),
           ],

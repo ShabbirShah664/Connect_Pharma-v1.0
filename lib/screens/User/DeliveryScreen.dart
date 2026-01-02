@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:connect_pharma/screens/ChatScreen.dart';
 import 'package:maps_launcher/maps_launcher.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class DeliveryScreen extends StatefulWidget {
   final Map<String, dynamic> requestData;
@@ -20,14 +20,14 @@ class DeliveryScreen extends StatefulWidget {
 }
 
 class _DeliveryScreenState extends State<DeliveryScreen> {
-  late LatLng _deliveryPosition;
+  late double _deliveryLat;
+  late double _deliveryLng;
 
   @override
   void initState() {
     super.initState();
-    final lat = widget.requestData['userLat'] as double? ?? 24.8607;
-    final lng = widget.requestData['userLng'] as double? ?? 67.0011;
-    _deliveryPosition = LatLng(lat, lng);
+    _deliveryLat = widget.requestData['userLat'] as double? ?? 24.8607;
+    _deliveryLng = widget.requestData['userLng'] as double? ?? 67.0011;
   }
 
   @override
@@ -125,7 +125,7 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
           child: Column(
             children: [
               _infoRow(Icons.location_on, 'Delivery Address', 'Your current location', () {
-                MapsLauncher.launchCoordinates(_deliveryPosition.latitude, _deliveryPosition.longitude);
+                MapsLauncher.launchCoordinates(_deliveryLat, _deliveryLng);
               }),
               const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1)),
               _infoRow(Icons.medication, 'Medicine', widget.requestData['medicineName'] ?? 'Panadol', null),
@@ -176,13 +176,22 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(20),
-            child: GoogleMap(
-              initialCameraPosition: CameraPosition(target: _deliveryPosition, zoom: 15),
-              markers: {
-                Marker(markerId: const MarkerId('delivery'), position: _deliveryPosition),
-              },
-              zoomControlsEnabled: false,
+          child: GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: LatLng(_deliveryLat, _deliveryLng),
+              zoom: 15,
             ),
+            markers: {
+              Marker(
+                markerId: const MarkerId('delivery'),
+                position: LatLng(_deliveryLat, _deliveryLng),
+                infoWindow: const InfoWindow(title: 'Delivery Location'),
+              ),
+            },
+            myLocationEnabled: true,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+          ),
           ),
         ),
       ),

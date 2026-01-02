@@ -51,6 +51,7 @@ class RequestService {
     double? userLat,
     double? userLng,
     double radius = 5.0, // Default radius in km
+    String? userAddress,
     Map<String, dynamic>? meta,
   }) async {
     // Validate input
@@ -73,6 +74,7 @@ class RequestService {
       'createdAt': FieldValue.serverTimestamp(),
       'userLat': userLat,
       'userLng': userLng,
+      'userAddress': userAddress,
       'radius': radius,
       'meta': meta ?? {},
     };

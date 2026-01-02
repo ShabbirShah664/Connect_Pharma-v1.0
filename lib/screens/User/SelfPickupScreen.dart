@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:maps_launcher/maps_launcher.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class SelfPickupScreen extends StatefulWidget {
   final Map<String, dynamic> requestData;
@@ -19,14 +19,14 @@ class SelfPickupScreen extends StatefulWidget {
 }
 
 class _SelfPickupScreenState extends State<SelfPickupScreen> {
-  late LatLng _pharmacyPosition;
+  late double _pharmacyLat;
+  late double _pharmacyLng;
 
   @override
   void initState() {
     super.initState();
-    final lat = widget.requestData['pharmacyLat'] as double? ?? 24.8607;
-    final lng = widget.requestData['pharmacyLng'] as double? ?? 67.0011;
-    _pharmacyPosition = LatLng(lat, lng);
+    _pharmacyLat = widget.requestData['pharmacyLat'] as double? ?? 24.8607;
+    _pharmacyLng = widget.requestData['pharmacyLng'] as double? ?? 67.0011;
   }
 
   @override
@@ -124,7 +124,7 @@ class _SelfPickupScreenState extends State<SelfPickupScreen> {
           child: Column(
             children: [
               _infoRow(Icons.store_mall_directory_outlined, 'Pharmacy Point', 'Life-Care Pharmacy', () {
-                MapsLauncher.launchCoordinates(_pharmacyPosition.latitude, _pharmacyPosition.longitude);
+                MapsLauncher.launchCoordinates(_pharmacyLat, _pharmacyLng);
               }),
               const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1)),
               _infoRow(Icons.assignment_outlined, 'Order ID', widget.requestId.substring(0, 8), null),
@@ -175,13 +175,23 @@ class _SelfPickupScreenState extends State<SelfPickupScreen> {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(20),
-            child: GoogleMap(
-              initialCameraPosition: CameraPosition(target: _pharmacyPosition, zoom: 15),
-              markers: {
-                Marker(markerId: const MarkerId('pharmacy'), position: _pharmacyPosition),
-              },
-              zoomControlsEnabled: false,
+          child: GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: LatLng(_pharmacyLat, _pharmacyLng),
+              zoom: 15,
             ),
+            markers: {
+              Marker(
+                markerId: const MarkerId('pharmacy'),
+                position: LatLng(_pharmacyLat, _pharmacyLng),
+                infoWindow: const InfoWindow(title: 'Pharmacy Location'),
+                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+              ),
+            },
+            myLocationEnabled: true,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+          ),
           ),
         ),
       ),

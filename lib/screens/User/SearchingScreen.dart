@@ -302,7 +302,7 @@ class _SearchingScreenState extends State<SearchingScreen> with SingleTickerProv
         Row(
           children: [
             Expanded(
-              child: OutlinedButton(
+              child: OutlinedButton.icon(
                 onPressed: () {
                     if (pharmacyId != null) {
                       Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(chatId: widget.requestId, title: 'Chat with Pharmacist')));
@@ -310,17 +310,20 @@ class _SearchingScreenState extends State<SearchingScreen> with SingleTickerProv
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wait for response...')));
                     }
                 },
+                icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                label: Text('Contact', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold)),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                child: Text('Contact', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold)),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: ElevatedButton(
+              child: ElevatedButton.icon(
                 onPressed: () => _initiateDelivery(),
+                icon: const Icon(Icons.local_shipping_outlined, size: 18),
+                label: Text('Deliver', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF007BFF),
                   foregroundColor: Colors.white,
@@ -328,7 +331,6 @@ class _SearchingScreenState extends State<SearchingScreen> with SingleTickerProv
                   elevation: 0,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                child: Text('Deliver', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
@@ -337,8 +339,16 @@ class _SearchingScreenState extends State<SearchingScreen> with SingleTickerProv
     );
   }
 
-  void _initiateDelivery() {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Delivery initiated!')));
+  Future<void> _initiateDelivery() async {
+    try {
+      await RequestService.updateRequestStatus(widget.requestId, 'accepted');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Order Confirmed! Check Tracker.')));
+        Navigator.pop(context); // Go back to UserScreen
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
   }
 
   Widget _buildAiSuggestionsButton() {
@@ -385,13 +395,45 @@ class RadarPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFF007BFF).withOpacity(1 - progress)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
+    final center = size.center(Offset.zero);
+    final maxRadius = size.width / 2;
+    
+    // Draw 3 concentric waves
+    for (int i = 0; i < 3; i++) {
+ waveProgress(i) {
+        double p = (progress + (i * 0.33)) % 1.0;
+        return p;
+      }
+      
+      double waveP = waveProgress(i);
+      final paint = Paint()
+        ..color = const Color(0xFF007BFF).withOpacity(1.0 - waveP)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2 + (1 - waveP) * 3;
 
-    canvas.drawCircle(size.center(Offset.zero), progress * (size.width / 2), paint);
-    canvas.drawCircle(size.center(Offset.zero), 5, Paint()..color = const Color(0xFF007BFF));
+      canvas.drawCircle(center, waveP * maxRadius, paint);
+      
+      // Add a subtle fill for the waves
+      final fillPaint = Paint()
+        ..color = const Color(0xFF007BFF).withOpacity((1.0 - waveP) * 0.1)
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(center, waveP * maxRadius, fillPaint);
+    }
+
+    // Central pulsing dot
+    final dotPaint = Paint()
+      ..color = const Color(0xFF007BFF)
+      ..style = PaintingStyle.fill;
+    
+    double dotSize = 6 + (1 - (progress * 2 - 1).abs()) * 4;
+    canvas.drawCircle(center, dotSize, dotPaint);
+    
+    // Outer glow for the central dot
+    canvas.drawCircle(
+      center, 
+      dotSize + 4, 
+      Paint()..color = const Color(0xFF007BFF).withOpacity(0.2)
+    );
   }
 
   @override

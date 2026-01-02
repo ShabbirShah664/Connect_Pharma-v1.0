@@ -16,7 +16,7 @@ class RoleSelectionScreen extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 16.0),
         child: SizedBox(
           width: double.infinity,
-          child: ElevatedButton(
+          child: ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF007BFF),
               foregroundColor: Colors.white,
@@ -27,7 +27,8 @@ class RoleSelectionScreen extends StatelessWidget {
               ),
             ),
             onPressed: () => _go(context, label),
-            child: Text(
+            icon: Icon(_getIcon(label), size: 22),
+            label: Text(
               label,
               style: GoogleFonts.inter(
                 fontSize: 16,
@@ -115,6 +116,15 @@ class RoleSelectionScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  IconData _getIcon(String label) {
+    switch (label) {
+      case 'User': return Icons.person_outline;
+      case 'Pharmacist': return Icons.local_pharmacy_outlined;
+      case 'Driver': return Icons.delivery_dining_outlined;
+      default: return Icons.help_outline;
+    }
   }
 
   Widget _buildShieldLogo() {

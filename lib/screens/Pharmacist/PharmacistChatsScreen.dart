@@ -59,7 +59,7 @@ class PharmacistChatsScreen extends StatelessWidget {
                   margin: const EdgeInsets.only(bottom: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey[100]!),
+                    side: BorderSide(color: Colors.grey[100]!),
                   ),
                   child: ListTile(
                     contentPadding: const EdgeInsets.all(12),

@@ -11,6 +11,10 @@ import 'package:connect_pharma/screens/User/DeliveryScreen.dart';
 import 'package:connect_pharma/screens/User/SelfPickupScreen.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:animate_do/animate_do.dart';
+import 'package:connect_pharma/screens/User/SearchingScreen.dart';
+import 'package:connect_pharma/screens/User/ProfileScreen.dart';
 
 class UserScreen extends StatefulWidget {
   // ... existing code ...
@@ -125,8 +129,8 @@ class _UserScreenState extends State<UserScreen> {
           final currentStatus = data['status'] as String? ?? '';
           final previousStatus = _previousStatuses[requestId];
 
-          // Detect status change from 'open' to 'accepted'
-          if (previousStatus == 'open' && currentStatus == 'accepted') {
+          // Detect status change from 'open' to 'responded' or 'accepted'
+          if (previousStatus == 'open' && (currentStatus == 'responded' || currentStatus == 'accepted')) {
             final medicineName = data['medicineName'] as String? ?? '';
             final pharmacyId = data['acceptedBy'] as String?;
             
@@ -246,27 +250,47 @@ class _UserScreenState extends State<UserScreen> {
     setState(() => _prescription = file);
   }
 
-  Future<void> _uploadAndBroadcast() async {
+  Future<void> _initiateRequest() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       _showSnack('Please login first.');
       return;
     }
+    
+    final medicineName = _searchCtrl.text.trim();
+    if (medicineName.isEmpty && _prescription == null) {
+      _showSnack('Please enter medicine name or upload prescription');
+      return;
+    }
+
     setState(() => _loading = true);
     try {
       String? url;
       if (_prescription != null) {
         url = await RequestService.uploadPrescription(_prescription!);
       }
-      await RequestService.createRequest(
+      
+      final docRef = await RequestService.createRequest(
         userId: user.uid,
-        medicineName: _searchCtrl.text.trim(),
+        medicineName: medicineName.isEmpty ? "Prescription Request" : medicineName,
         prescriptionUrl: url,
         broadcast: true,
         userLat: _currentPosition.latitude,
         userLng: _currentPosition.longitude,
       );
-      _showSnack('Request sent to nearby pharmacies');
+      
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SearchingScreen(
+              requestId: docRef.id,
+              medicineName: medicineName.isEmpty ? "Prescription" : medicineName,
+            ),
+          ),
+        );
+      }
+      
       setState(() => _prescription = null);
     } catch (e) {
       _showSnack('Failed: $e');
@@ -275,15 +299,65 @@ class _UserScreenState extends State<UserScreen> {
     }
   }
 
+  Future<void> _uploadAndBroadcast() => _initiateRequest();
+
   void _showSnack(String m) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   @override
-  void dispose() {
-    _searchCtrl.dispose();
-    _requestSubscription?.cancel();
-    _previousStatuses.clear();
-    super.dispose();
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final shouldLogout = await _showLogoutDialog();
+        if (shouldLogout == true && mounted) {
+          await FirebaseAuth.instance.signOut();
+          Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF8F9FA),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                _profileHeader(),
+                const SizedBox(height: 8),
+                _searchBar(),
+                const SizedBox(height: 12),
+                _actionButtons(),
+                const SizedBox(height: 12),
+                _mapPlaceholder(),
+                const SizedBox(height: 8),
+                _recentRequestsCard(),
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<bool?> _showLogoutDialog() async {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Do you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _profileHeader() {
@@ -308,8 +382,9 @@ class _UserScreenState extends State<UserScreen> {
         IconButton(
           icon: const Icon(Icons.logout),
           onPressed: () async {
-            await FirebaseAuth.instance.signOut();
-            if (mounted) {
+            final shouldLogout = await _showLogoutDialog();
+            if (shouldLogout == true && mounted) {
+              await FirebaseAuth.instance.signOut();
               Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
             }
           },
@@ -559,25 +634,7 @@ class _UserScreenState extends State<UserScreen> {
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none),
             ),
-            onSubmitted: (_) async {
-              final user = FirebaseAuth.instance.currentUser;
-              if (user == null || _searchCtrl.text.trim().isEmpty) {
-                _showSnack('Enter medicine name');
-                return;
-              }
-
-              // Auto-trigger AI on search?
-               _showAISuggestions(_searchCtrl.text.trim());
-
-              await RequestService.createRequest(
-                userId: user.uid,
-                medicineName: _searchCtrl.text.trim(),
-                prescriptionUrl: null,
-                broadcast: true,
-              );
-
-              _showSnack('Request sent to pharmacies');
-            },
+            onSubmitted: (_) => _initiateRequest(),
           ),
         ),
         const SizedBox(width: 8),
@@ -1114,55 +1171,295 @@ class _UserScreenState extends State<UserScreen> {
     }
   }
 
+  int _currentIndex = 0;
+
+  void _onNavItemTapped(int index) {
+    setState(() => _currentIndex = index);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final presName =
-        _prescription != null ? _prescription!.path.split('/').last : 'No file';
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('CONNECT-PHARMA'),
-        centerTitle: true,
-        leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios),
-            onPressed: () => Navigator.maybePop(context)),
+      backgroundColor: Colors.white,
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          _buildDashboard(),
+          _buildPlaceholder('Tracker'),
+          const ProfileScreen(),
+          _buildPlaceholder('AI Suggestions'),
+        ],
       ),
-      body: SafeArea(
-        child: ListView(
+      bottomNavigationBar: _buildBottomNav(),
+    );
+  }
+
+  Widget _buildDashboard() {
+    final presName = _prescription != null ? _prescription!.path.split('/').last : null;
+    return SafeArea(
+      child: Column(
+        children: [
+          _buildCustomHeader(),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  const SizedBox(height: 16),
+                  _buildUnifiedSearchBar(),
+                  const SizedBox(height: 12),
+                  _buildFeatureButtons(),
+                  const SizedBox(height: 16),
+                  _buildMapSection(),
+                  const SizedBox(height: 16),
+                  if (presName != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                      child: Text(
+                        'Selected: $presName',
+                        style: GoogleFonts.inter(fontSize: 12, color: Colors.blue),
+                      ),
+                    ),
+                  _buildLocationCard(),
+                  const SizedBox(height: 20),
+                  _buildFindButton(),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder(String title) {
+    return SafeArea(
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _profileHeader(),
-            const SizedBox(height: 6),
-            _searchBar(),
-            const SizedBox(height: 6),
-            _actionButtons(),
-            const SizedBox(height: 10),
-            _mapPlaceholder(),
-            const SizedBox(height: 12),
-            Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Text('Selected file: $presName',
-                    style: const TextStyle(color: Colors.black54))),
-            const SizedBox(height: 12),
-            _recentRequestsCard(),
-            const SizedBox(height: 80),
+            Icon(Icons.construction, size: 60, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text(title, style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey)),
+            Text('Coming Soon!', style: GoogleFonts.inter(color: Colors.grey)),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () => setState(() => _currentIndex = 0),
+              child: const Text('Go Home'),
+            ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showSnack('Quick ask not implemented'),
-        label: const Text('Quick Ask'),
-        icon: const Icon(Icons.send),
+    );
+  }
+
+  Widget _buildCustomHeader() {
+    return FadeInDown(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios, size: 20),
+              onPressed: () => Navigator.maybePop(context),
+            ),
+            Text(
+              'CONNECT-PHARMA',
+              style: GoogleFonts.inter(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: Colors.black87,
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.notifications_none_outlined),
+              onPressed: () => _showSnack('Notifications'),
+            ),
+          ],
+        ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 0,
-        onTap: (i) => _showSnack('Nav tap $i'),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.track_changes), label: 'Tracker'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Account'),
-          BottomNavigationBarItem(icon: Icon(Icons.bubble_chart), label: 'AI'),
-        ],
+    );
+  }
+
+  Widget _buildUnifiedSearchBar() {
+    return FadeInUp(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFFBFBFB),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey[200]!),
+          ),
+          child: TextField(
+            controller: _searchCtrl,
+            onSubmitted: (_) => _initiateRequest(),
+            decoration: InputDecoration(
+              hintText: 'Search Medicine Nearby You',
+              hintStyle: GoogleFonts.inter(color: Colors.grey[400], fontSize: 13),
+              prefixIcon: Icon(Icons.search, color: Colors.grey[400]),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _buildFeatureButtons() {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 200),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        child: Column(
+          children: [
+            _featureButton(
+              'Upload Prescription',
+              const Color(0xFF007BFF),
+              Colors.white,
+              _pickPrescription,
+            ),
+            const SizedBox(height: 12),
+            _featureButton(
+              'Ask For Suggestions',
+              const Color(0xFFE7F3FF),
+              const Color(0xFF007BFF),
+              () => _showAISuggestions(_searchCtrl.text.trim()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _featureButton(String text, Color bgColor, Color textColor, VoidCallback onTap) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: _loading ? null : onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: bgColor,
+          foregroundColor: textColor,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        child: Text(
+          text,
+          style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMapSection() {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 300),
+      child: Container(
+        height: 220,
+        margin: const EdgeInsets.symmetric(horizontal: 24.0),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey[200]!),
+          image: const DecorationImage(
+            image: NetworkImage('https://via.placeholder.com/600x400/F5F5F5/808080?text=Map+Preview'),
+            fit: BoxFit.cover,
+            opacity: 0.6,
+          ),
+        ),
+        child: const Center(
+          child: Icon(Icons.location_on, color: Colors.red, size: 40),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLocationCard() {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 400),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Select Location',
+              style: GoogleFonts.inter(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Your Location',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: Colors.grey[500],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '2572 Westhaven Rd, Santa Ana, Illinois 63456', // Dummy address as per image
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                color: Colors.grey[700],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFindButton() {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 500),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _loading ? null : _initiateRequest,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF007BFF),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              elevation: 4,
+              shadowColor: const Color(0xFF007BFF).withOpacity(0.4),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: _loading
+                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                : Text(
+                    'FIND',
+                    style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 1.5),
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomNav() {
+    return BottomNavigationBar(
+      currentIndex: _currentIndex,
+      onTap: _onNavItemTapped,
+      type: BottomNavigationBarType.fixed,
+      backgroundColor: Colors.white,
+      selectedItemColor: const Color(0xFF007BFF),
+      unselectedItemColor: Colors.grey[400],
+      selectedLabelStyle: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.bold),
+      unselectedLabelStyle: GoogleFonts.inter(fontSize: 11),
+      items: const [
+        BottomNavigationBarItem(icon: Icon(Icons.home_filled), label: 'Home'),
+        BottomNavigationBarItem(icon: Icon(Icons.track_changes), label: 'Tracker'),
+        BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Account'),
+        BottomNavigationBarItem(icon: Icon(Icons.bubble_chart_outlined), label: 'AI'),
+      ],
     );
   }
 }

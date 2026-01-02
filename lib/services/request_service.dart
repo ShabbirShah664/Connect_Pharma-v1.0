@@ -50,6 +50,7 @@ class RequestService {
     String? pharmacyId,
     double? userLat,
     double? userLng,
+    double radius = 5.0, // Default radius in km
     Map<String, dynamic>? meta,
   }) async {
     // Validate input
@@ -72,6 +73,7 @@ class RequestService {
       'createdAt': FieldValue.serverTimestamp(),
       'userLat': userLat,
       'userLng': userLng,
+      'radius': radius,
       'meta': meta ?? {},
     };
 
@@ -82,6 +84,20 @@ class RequestService {
       throw Exception('Firestore error (${e.code}): ${e.message}');
     } catch (e) {
       throw Exception('Failed to create request: $e');
+    }
+  }
+
+  /// Update the search radius of a request.
+  static Future<void> updateRequestRadius(String requestId, double newRadius) async {
+    try {
+      await _db.collection('requests').doc(requestId).update({
+        'radius': newRadius,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException catch (e) {
+      throw Exception('Firestore error (${e.code}): ${e.message}');
+    } catch (e) {
+      throw Exception('Failed to update radius: $e');
     }
   }
 

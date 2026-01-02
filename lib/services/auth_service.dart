@@ -12,6 +12,7 @@ class AuthService {
     required String password,
     required String role,
     String? displayName,
+    Map<String, dynamic>? meta,
   }) async {
     try {
       final cred = await _auth.createUserWithEmailAndPassword(
@@ -24,15 +25,18 @@ class AuthService {
         await cred.user!.updateDisplayName(displayName);
       }
 
-      final batch = _db.batch();
-      final usersRef = _db.collection('users').doc(uid);
-      batch.set(usersRef, {
+      final data = {
         'uid': uid,
         'email': email,
         'role': role,
         'displayName': displayName ?? '',
         'createdAt': FieldValue.serverTimestamp(),
-      });
+        ...?meta,
+      };
+
+      final batch = _db.batch();
+      final usersRef = _db.collection('users').doc(uid);
+      batch.set(usersRef, data);
 
       final roleCollection = role == 'pharmacist'
           ? 'pharmacists'
@@ -40,13 +44,7 @@ class AuthService {
               ? 'riders'
               : 'users';
       final roleRef = _db.collection(roleCollection).doc(uid);
-      batch.set(roleRef, {
-        'uid': uid,
-        'email': email,
-        'role': role,
-        'displayName': displayName ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      batch.set(roleRef, data);
 
       // optional: create role meta doc once
       final roleMetaRef = _db.collection('role_meta').doc(role);

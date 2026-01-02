@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:connect_pharma/screens/WelcomeScreen.dart';
 import 'screens/RoleSelectionScreen.dart';
@@ -30,7 +31,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Connect-Pharma',
-      theme: ThemeData(primarySwatch: Colors.blue),
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme),
+      ),
       initialRoute: '/',
       routes: {
         '/': (_) => const WelcomeScreen(),
